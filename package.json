@@ -61,7 +61,8 @@
     "grunt-coffeelint": "0.0.13"
   },
   "scripts": {
-    "prepublish": "grunt dist"
+    "prepublish": "grunt dist",
+    "postinstall": "grunt dist"
   }
 
 }
