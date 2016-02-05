@@ -16,6 +16,7 @@ utils   = require "./utils"
 sorting = require "./sorting"
 inherit_utils = require "./inheritance"
 JSObjectHandler = require "./lang/javascript"
+RSVP = require("rsvp")
 
 ##
 # RiveScript (hash options)
@@ -114,6 +115,13 @@ class RiveScript
   ##
   version: ->
     return VERSION
+
+  ##
+  # Promise Promise
+  #
+  # Alias for RSVP.Promise
+  ##
+  Promise: RSVP.Promise
 
   ##
   # private void runtime ()
@@ -754,5 +762,20 @@ class RiveScript
   ##
   reply: (user, msg, scope) ->
     return @brain.reply(user, msg, scope)
+
+  ##
+  # Promise replyAsync (string username, string message [[, scope], callback])
+  #
+  # Asyncronous version of reply. Use replyAsync if at least one of the subroutines
+  # used with <call> tag returns a promise
+  ##
+  replyAsync: (user, msg, scope, callback) ->
+    reply = @brain.reply(user, msg, scope, true)
+    if callback
+      reply.then (result) =>
+        callback.call @, null, result
+      .catch (error) =>
+        callback.call @, error, null
+    return reply
 
 module.exports = RiveScript
