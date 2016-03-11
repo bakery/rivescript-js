@@ -1,5 +1,19 @@
 # Changes
 
+* 1.6.0 2016-03-08
+  - Update the `deparse()` and `stringify()` functions to include the source
+    code of JavaScript object macros in the output.
+  - Update the `loadDirectory()` function to load RiveScript files recursively.
+
+* 1.4.0 2016-02-11
+  - Add support for asynchronous object macros (using promises via RSVP.js),
+    and the accompanying `replyAsync()` function and example code.
+  - Add ability to use an array in a reply element as a shortcut for random
+    text: `- (@myArray)` translates to `- {random}my|array|content{/random}`.
+
+* 1.2.1 2016-02-03
+  - Fix `setSubroutine()` not accepting a function object as an argument.
+
 * 1.2.0 2015-12-29
   - Fix looping over object keys by adding a check for `hasOwnProperty()`, to
     prevent third party JavaScript libraries from modifying the root `Object`

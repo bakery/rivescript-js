@@ -62,13 +62,13 @@ class Brain
       reply = @_getReply(user, msg, "normal", 0, scope)
 
     reply = @processCallTags(reply, scope, async)
-    
+
     if not utils.isAPromise(reply)
       @onAfterReply(msg, user, reply)
     else
-      reply.then (result) => 
+      reply.then (result) =>
         @onAfterReply(msg, user, result)
-    
+
     return reply
 
   onAfterReply: (msg, user, reply) ->
@@ -82,16 +82,17 @@ class Brain
     @_currentUser = undefined
 
   ##
-  # string|Promise processCallTags (string reply, Object scope, bool async)
+  # string|Promise processCallTags (string reply, object scope, bool async)
   #
-  # Process <call> tags in the preprocessed reply string. 
-  # If async is true, processCallTags can handle asynchronous subroutines
-  # and it returns a promise, other wise a string is returned
+  # Process <call> tags in the preprocessed reply string.
+  # If `async` is true, processCallTags can handle asynchronous subroutines
+  # and it returns a promise, otherwise a string is returned
   ##
   processCallTags: (reply, scope, async) ->
     reply = reply.replace(/\{__call__\}/g, "<call>")
     reply = reply.replace(/\{\/__call__\}/g, "</call>")
     callRe = /<call>(.+?)<\/call>/ig
+    argsRe = /{__call_arg__}([^{]*){\/__call_arg__}/ig
 
     giveup = 0
     matches = {}
@@ -109,13 +110,24 @@ class Brain
         break
 
       text  = utils.strip(match[1])
-      parts = text.split(/\s+/)
-      obj   = parts.shift()
-      args  = parts
+      
+      # get subroutine name
+      subroutineNameMatch = (/(\S+)/ig).exec(text)
+      subroutineName = subroutineNameMatch[0]
+
+      args = []
+
+      # get arguments
+      while true
+        m = argsRe.exec(text)
+        if not m
+          break
+        args.push(m[1])
+
 
       matches[match[1]] =
         text: text
-        obj: obj
+        obj: subroutineName
         args: args
 
     # go through all the object calls and run functions
@@ -150,19 +162,87 @@ class Brain
     if not async
       return reply
     else
-      # wait for all the promises to be resolved and 
+      # wait for all the promises to be resolved and
       # return a resulting promise with the final reply
       return new RSVP.Promise (resolve, reject) =>
         RSVP.all(p.promise for p in promises).then (results) =>
           for i in [0...results.length]
             reply = @_replaceCallTags(promises[i].text, results[i], reply)
-            
+
           resolve(reply)
         .catch (reason) =>
           reject(reason)
 
   _replaceCallTags: (callSignature, callResult, reply) ->
     return reply.replace(new RegExp("<call>" + utils.quotemeta(callSignature) + "</call>", "i"), callResult)
+
+  _parseCallArgsString: (args) ->
+    # turn args string into a list of arguments
+    result = []
+    buff = ""
+    insideAString = false
+    spaceRe = /\s/ig
+    doubleQuoteRe = /"/ig
+
+    flushBuffer = () ->
+      if buff.length isnt 0 
+        result.push(buff)
+      buff = ""
+
+    for c in args
+      if c.match(spaceRe) and not insideAString
+        flushBuffer()
+        continue
+      if c.match(doubleQuoteRe)
+        if insideAString
+          flushBuffer()
+        insideAString = not insideAString
+        continue
+      buff = buff + c
+
+    flushBuffer()
+
+    return result
+
+  _wrapArgumentsInCallTags: (reply) ->
+    # wrap arguments inside <call></call> in {__call_arg__}{/__call_arg__}
+    callRegEx = /<call>\s*(.*?)\s*<\/call>/ig
+    callArgsRegEx = /<call>\s*[^\s]+ (.*)<\/call>/ig
+    
+    callSignatures = []
+
+    while true
+      match = callRegEx.exec(reply)
+
+      if not match
+        break
+
+      originalCallSignature = match[0]
+      wrappedCallSignature = originalCallSignature
+
+      while true
+        argsMatch = callArgsRegEx.exec(originalCallSignature)
+        if not argsMatch
+          break
+        
+        originalArgs = argsMatch[1]
+        args = @_parseCallArgsString(originalArgs)
+        wrappedArgs = []
+
+        for a in args
+          wrappedArgs.push "{__call_arg__}#{a}{/__call_arg__}"
+
+        wrappedCallSignature = wrappedCallSignature.replace(originalArgs, 
+          wrappedArgs.join(' '))
+
+      callSignatures.push
+        original: originalCallSignature
+        wrapped: wrappedCallSignature 
+
+    for cs in callSignatures
+      reply = reply.replace cs.original, cs.wrapped
+
+    reply
 
   ##
   # string _getReply (string user, string msg, string context, int step, scope)
@@ -637,8 +717,9 @@ class Brain
   #                     string[] botstars, int step, scope)
   #
   # Process tags in a reply element.
-  # XX: All the tags get processed here except for <call> tags that have 
-  # a separate subroutine (refer to processCallTags for more info)
+  #
+  # All the tags get processed here except for `<call>` tags which have
+  # a separate subroutine (refer to `processCallTags` for more info)
   ##
   processTags: (user, msg, reply, st, bst, step, scope) ->
     # Prepare the stars and botstars.
@@ -650,6 +731,28 @@ class Brain
       stars.push "undefined"
     if botstars.length is 1
       botstars.push "undefined"
+
+    # Turn arrays into randomized sets.
+    match = reply.match(/\(@([A-Za-z0-9_]+)\)/i)
+    giveup = 0
+    while match
+      if giveup++ > @master._depth
+        @warn "Infinite loop looking for arrays in reply!"
+        break
+
+      name = match[1]
+      if @master._array[name]
+        result = "{random}" + @master._array[name].join("|") + "{/random}"
+      else
+        result = "\x00@#{name}\x00" # Dummy it out so we can reinsert it later.
+
+      reply = reply.replace(new RegExp("\\(@" + utils.quotemeta(name) + "\\)", "ig")
+        result)
+      match = reply.match(/\(@([A-Za-z0-9_]+)\)/i)
+    reply = reply.replace(/\x00@([A-Za-z0-9_]+)\x00/g, "(@$1)")
+
+    # Wrap args inside call tags
+    reply = @_wrapArgumentsInCallTags(reply)
 
     # Tag shortcuts.
     reply = reply.replace(/<person>/ig,    "{person}<star>{/person}")
@@ -731,6 +834,7 @@ class Brain
     # Dummy out the <call> tags first, because we don't handle them right here.
     reply = reply.replace(/<call>/ig, "{__call__}")
     reply = reply.replace(/<\/call>/ig, "{/__call__}")
+
     while true
       # This regexp will match a <tag> which contains no other tag inside it,
       # i.e. in the case of <set a=<get b>> it will match <get b> but not the

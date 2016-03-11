@@ -7,7 +7,7 @@
 "use strict"
 
 # Constants
-VERSION  = "1.2.0"
+VERSION  = "1.6.0"
 
 # Helper modules
 Parser  = require "./parser"
@@ -17,6 +17,7 @@ sorting = require "./sorting"
 inherit_utils = require "./inheritance"
 JSObjectHandler = require "./lang/javascript"
 RSVP = require("rsvp")
+readDir = require("fs-readdir-recursive")
 
 ##
 # RiveScript (hash options)
@@ -120,6 +121,16 @@ class RiveScript
   # Promise Promise
   #
   # Alias for RSVP.Promise
+  #
+  # You can use shortcut in your async subroutines
+  #
+  # ```javascript
+  # rs.setSubroutine("asyncHelper", function (rs, args) {
+  #  return new rs.Promise(function (resolve, reject) {
+  #    resolve(42);
+  #  });
+  # });
+  # ```
   ##
   Promise: RSVP.Promise
 
@@ -274,7 +285,7 @@ class RiveScript
   ##
   # void loadDirectory (string path[, func onSuccess[, func onError]])
   #
-  # Load RiveScript documents from a directory.
+  # Load RiveScript documents from a directory recursively.
   #
   # This function is not supported in a web environment.
   ##
@@ -286,29 +297,22 @@ class RiveScript
 
     loadCount = @_loadCount++
     @_pending[loadCount] = {}
+    toLoad = []
 
     @say "Loading batch #{loadCount} from directory #{path}"
 
-    # Read the directory.
-    @_node.fs.readdir path, (err, files) =>
-      if err
-        if typeof(onError) is "function"
-          onError.call undefined, err
-        else
-          @warn err
-        return
+    # Load all the files.
+    files = readDir(path)
+    for file in files
+      if file.match(/\.(rive|rs)$/i)
+        # Keep track of the file's status.
+        @_pending[loadCount][path+"/"+file] = 1
+        toLoad.push path+"/"+file
 
-      toLoad = []
-      for file in files
-        if file.match(/\.(rive|rs)$/i)
-          # Keep track of the file's status.
-          @_pending[loadCount][path+"/"+file] = 1
-          toLoad.push path+"/"+file
-
-      # Load all the files.
-      for file in toLoad
-        @say "Parsing file #{file} from directory"
-        @_nodeLoadFile loadCount, file, onSuccess, onError
+    # Load all the files.
+    for file in toLoad
+      @say "Parsing file #{file} from directory"
+      @_nodeLoadFile loadCount, file, onSuccess, onError
 
   ##
   # bool stream (string code[, func onError])
@@ -446,6 +450,11 @@ class RiveScript
       topics: utils.clone(@_topics)
       inherits: utils.clone(@_inherits)
       includes: utils.clone(@_includes)
+      objects: {}
+
+    for key of this._handlers
+      result.objects[key] =
+        _objects: utils.clone(this._handlers[key]._objects)
 
     # Begin topic.
     if result.topics.__begin__?
@@ -768,6 +777,28 @@ class RiveScript
   #
   # Asyncronous version of reply. Use replyAsync if at least one of the subroutines
   # used with <call> tag returns a promise
+  #
+  # Example: using promises
+  #
+  # ```javascript
+  # rs.replyAsync(user, message).then(function(reply) {
+  #   console.log("Bot>", reply);
+  # }).catch(function(error) {
+  #   console.error("Error: ", error);
+  # });
+  # ```
+  #
+  # Example: using the callback
+  #
+  # ```javascript
+  # rs.replyAsync(username, msg, this, function(error, reply) {
+  #   if (!error) {
+  #     console.log("Bot>", reply);
+  #   } else {
+  #     console.error("Error: ", error);
+  #   }
+  # });
+  # ```
   ##
   replyAsync: (user, msg, scope, callback) ->
     reply = @brain.reply(user, msg, scope, true)
